@@ -115,6 +115,7 @@ This manual documents Gambit.  It covers release @value{VERSION}.
 * I/O and ports::                   I/O and ports
 * Lexical syntax and readtables::   Lexical syntax and readtables
 * C-interface::                     C-interface
+* Internal APIs::                   Internal APIs
 * System limitations::              System limitations
 * Copyright and license::           Copyright and license
 * General index::                   General index
@@ -263,6 +264,7 @@ automatically.
 * I/O and ports::                   I/O and ports
 * Lexical syntax and readtables::   Lexical syntax and readtables
 * C-interface::                     C-interface
+* Internal APIs::                   Internal APIs
 * System limitations::              System limitations
 * Copyright and license::           Copyright and license
 @end menu
@@ -16662,7 +16664,7 @@ semantics of SIX:
 (101 102 103 104)
 @end smallexample
 
-@node C-interface, System limitations, Lexical syntax and readtables, Top
+@node C-interface, Internal APIs, Lexical syntax and readtables, Top
 @chapter C-interface
 @cindex FFI
 @cindex foreign function interface
@@ -17985,7 +17987,155 @@ This situation can be avoided by having only one Scheme thread that
 does Scheme to C to Scheme calls.  Other Scheme threads are limited to
 simple Scheme to C calls that don't call back to Scheme.
 
-@node System limitations, Copyright and license, C-interface, Top
+@node Internal APIs, System limitations, C-interface, Top
+@chapter Internal APIs
+@cindex Internal
+
+Gambit has many internal functions that you might want to use
+while writing the lower-level parts of your programs, or debugging them.
+Be mindful though that these functions are subject to change without warning,
+so keep in touch with the authors when you use them.
+
+This chapter only covers those few internals that a member of the community
+felt the need to document.
+We encourage you to document those internals you use, or
+to pay a developer to document those you'd like to use.
+
+@menu
+* Writer internals::       Extending the writer
+@end menu
+
+@node Writer internals, , , Internal APIs
+@section Writer internals
+
+By using the following internals, you can extend the Gambit writer,
+as invoked by @code{write}, to specially recognize and print your data structures.
+
+@deffn ##wr-set! @var{write-function}
+The @code{##wr} function used to print objects will be bound to @var{write-function},
+replacing the @code{##default-wr} or any previous replacement function.
+
+Like @code{##default-wr}, the @var{write-function} must take two arguments,
+a @var{writeenv} context, and an @var{object} to print.
+
+For example, you can restore the default writer behavior with:
+@smallexample
+> @b{(##wr-set! ##default-wr)}
+@end smallexample
+@end deffn
+
+@deffn ##wr @var{writeenv} @var{obj}
+This is the main entry point of the internal writer API, that will
+be called by @code{write}, then recursively by other writer functions.
+
+The entire point of this variable is that you can @code{set!} it
+directly or indirectly via @code{##wr-set!},
+as a hook by which to extend or modify the behavior of the builtin writer.
+You can define a completely different function from scratch, or you can
+keep following the conventions of Gambit described below, and fallback
+to calling @code{##default-wr} and/or the previous value of @code{##wr}
+when faced with an object you doesn't know how to handle.
+
+The first argument, @var{writeenv}, is setup by @code{write} to a
+``write environment'' that specifies not just the port on which to write,
+but also additional context that allows for
+pretty printing, writing circular objects, serialization, etc.
+We document below how to use various the @code{macro-writeenv-} accessors
+to extract relevant information.
+
+The functions you define to write values should recursively call @code{##wr}
+on the sub-objects of objects they are writing, to enjoy the benefits
+of the write algorithm and its handling of more values
+than you may know how to handle.
+
+@end deffn
+
+@code{##wr}
+
+@deffn ##default-wr @var{write-env} @var{object}
+This is the default writer for Gambit.
+Your writer functions can delegate to it the writing of all Gambit values,
+so you only needs handle new entities that Gambit doesn't print to your liking.
+You can also use it to reset the current writer, as already previously explained.
+@end deffn
+
+All the writer functions take a write environment object as parameter.
+You may access this environment with the following macros:
+
+@deffn macro-writeenv-style @var{write-env}
+The accessor will return the ``style'' of the write environment.
+The value may be one of the symbols
+@code{mark}, @code{display}, @code{print}, @code{pretty-print}, @code{write} or @code{write-shared}.
+
+Your code does not need to distinguish between most of these styles,
+but you @emph{must} pay attention to @code{mark}:
+to handle circular data structures and objects that cannot be printed readably,
+the Gambit writer will first traverse the graph of objects to write with
+a write environment of style @code{mark};
+during that traversal, Gambit will mark objects that have already been seen,
+and assign numbers to those that appear multiple times.
+Your writer functions must @emph{not} write anything to the output port,
+not call any function with write side-effects,
+when the style is @code{mark};
+instead your writer functions @emph{must} recurse through the same objects
+as they will in the second phase, when they will actually print them,
+and call the @code{##wr} function on them.
+@end deffn
+
+@deffn macro-writeenv-port @var{write-env}
+@end deffn
+
+@deffn macro-writeenv-readtable @var{write-env}
+An important part of the write environment is the “readtable”
+that defines the external representation of objects,
+so that calling write with a specific readtable
+will output a representation that can be read back
+with read with the same readtable.
+@end deffn
+
+@deffn macro-writeenv-marktable @var{write-env}
+@end deffn
+
+@deffn macro-writeenv-force? @var{write-env}
+@end deffn
+
+@deffn macro-writeenv-width @var{write-env}
+@end deffn
+
+@deffn macro-writeenv-shift @var{write-env}
+@end deffn
+
+@deffn macro-writeenv-close-parens @var{write-env}
+@end deffn
+
+@deffn macro-writeenv-level @var{write-env}
+@end deffn
+
+@deffn macro-writeenv-limit @var{write-env}
+@end deffn
+
+@deffn macro-writeenv-max-unescaped-char @var{write-env}
+@end deffn
+
+@deffn ##wr-str @var{write-env} @var{string}
+@end deffn
+
+@deffn ##wr-substr @var{write-env} @var{string} @var{start} @var{end}
+@end deffn
+
+@deffn ##wr-filler @var{write-env} @var{n} @var{string}
+@end deffn
+
+@deffn ##wr-spaces @var{write-env} @var{n}
+@end deffn
+
+@deffn ##wr-indent @var{write-env} @var{shifted-column}
+@end deffn
+
+@deffn ##wr-sn @var{write-env} @var{object} @var{type} @var{name}
+@end deffn
+
+@node System limitations, Copyright and license, Internal APIs, Top
 @chapter System limitations
 @cindex limitations
 
